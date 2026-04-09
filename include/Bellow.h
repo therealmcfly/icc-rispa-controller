@@ -8,7 +8,7 @@ enum mode
 	symmetric = 1,
 	asymmetric = 2,
 	icc = 3,
-	icc_1d = 4
+	icc1d = 4
 };
 
 // declaration of new class Bellow
@@ -67,6 +67,7 @@ public:
 	double getPressure();
 
 	double getProximityForICC();
+	double getProximityForIccNetwork();
 
 	void setOperationMode(mode operationMode);
 	void setPressure(int pressure);

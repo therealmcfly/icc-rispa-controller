@@ -4,8 +4,8 @@
 
 // declare and initialise variables
 #define waitTimeSymmetric 100			 // ms (symmetric mode)
-#define waitTimePipePressurised 40 // ms (asymmetric mode)
-#define waitTimeNextBellow 100		 // ms (asymmetric mode)
+#define waitTimePipePressurised 60 // ms (asymmetric mode)
+#define waitTimeNextBellow 140		 // ms (asymmetric mode)
 #define buttonPin 3
 #define PI 3.1415926535897932384626433832795
 mode operationMode = off;
@@ -15,8 +15,15 @@ uint8_t iccRxBytes[2];
 uint8_t iccRxPos = 0;
 mode lastReportedMode = off;
 
+// #define ICC1D_PACKET_DEBUG 1
+
 // instantiation of the class Bellow (create object)
 // Bellow bn(proximitySensorPort, forceSensorPin, switchValvePin, enableValvePin, proximityParameterA, proximityParameterB, fsrParameterA, fsrParameterB);
+// Bellow b1(7, A4, 22, 24, 64.624, 1415.8, 250.34, 353.6);
+// Bellow b2(6, A3, 26, 28, 41.764, 1866.7, 200.86, 310.22);
+// Bellow b3(5, A2, 30, 32, 33.939, 1194.8, 205.93, 229.06);
+// Bellow b4(4, A1, 34, 36, 38.048, 2171.7, 171.6, 325.88);
+// Bellow b5(3, A0, 38, 40, 37.509, 1788, 258.52, 372.67);
 Bellow b1(7, A4, 22, 24, 64.624, 1415.8, 250.34, 353.6);
 Bellow b2(6, A3, 26, 28, 41.764, 1866.7, 200.86, 310.22);
 Bellow b3(5, A2, 30, 32, 33.939, 1194.8, 205.93, 229.06);
@@ -95,6 +102,13 @@ void setEnableValves(int bellowNumber)
 		b4.setEnableValve(false);
 		b5.setEnableValve(true);
 		break;
+	case 6:
+		b1.setEnableValve(true);
+		b2.setEnableValve(true);
+		b3.setEnableValve(true);
+		b4.setEnableValve(true);
+		b5.setEnableValve(true);
+		break;
 	}
 }
 
@@ -105,21 +119,30 @@ void buttonInterrupt()
 	if ((buttonTimePressed > 50) && (buttonTimePressed < 250))
 	{ // press-time must be >50 ms to avoid bouncing
 		// change operation mode to next state
+		// switch (operationMode)
+		// {
+		// case (off):
+		// 	operationMode = symmetric;
+		// 	break;
+		// case (symmetric):
+		// 	operationMode = asymmetric;
+		// 	break;
+		// case (asymmetric):
+		// 	operationMode = icc;
+		// 	break;
+		// case (icc):
+		// 	operationMode = icc1d;
+		// 	break;
+		// case (icc1d):
+		// 	operationMode = off;
+		// 	break;
+		// }
 		switch (operationMode)
 		{
 		case (off):
-			operationMode = symmetric;
+			operationMode = icc1d;
 			break;
-		case (symmetric):
-			operationMode = asymmetric;
-			break;
-		case (asymmetric):
-			operationMode = icc;
-			break;
-		case (icc):
-			operationMode = icc_1d;
-			break;
-		case (icc_1d):
+		case (icc1d):
 			operationMode = off;
 			break;
 		}
@@ -234,35 +257,133 @@ bool tryReadIccPressure(int *pressureOut)
 
 bool tryReadIccPressureVec(int16_t pressureOut[5])
 {
-	static uint8_t iccRxBytes[10]; // 5 * int16
-	static uint8_t iccRxPos = 0;
+	static const uint8_t SOF0 = 0xAA;
+	static const uint8_t SOF1 = 0x55;
+	static uint8_t payload[10];			// 5 * int16
+	static uint8_t parserState = 0; // 0: wait SOF0, 1: wait SOF1, 2: read payload
+	static uint8_t payloadPos = 0;
+	static uint32_t icc1dPacketCount = 0;
 
 	while (Serial1.available() > 0)
 	{
 		uint8_t rxByte = (uint8_t)Serial1.read();
-		iccRxBytes[iccRxPos++] = rxByte;
 
-		if (iccRxPos == 10)
+		if (parserState == 0)
 		{
-			// Decode incoming 5x int16, big-endian per cell [MSB][LSB]
+			if (rxByte == SOF0)
+			{
+				parserState = 1;
+			}
+			continue;
+		}
+
+		if (parserState == 1)
+		{
+			if (rxByte == SOF1)
+			{
+				parserState = 2;
+				payloadPos = 0;
+			}
+			else if (rxByte == SOF0)
+			{
+				parserState = 1;
+			}
+			else
+			{
+				parserState = 0;
+			}
+			continue;
+		}
+
+		payload[payloadPos++] = rxByte;
+
+		if (payloadPos == 10)
+		{
+			icc1dPacketCount++;
+
+#ifdef ICC1D_PACKET_DEBUG
+			int16_t leVec[5];
+			int16_t beVec[5];
 			for (uint8_t i = 0; i < 5; i++)
 			{
-				uint8_t msb = iccRxBytes[i * 2];
-				uint8_t lsb = iccRxBytes[i * 2 + 1];
-				pressureOut[i] = (int16_t)(((uint16_t)msb << 8) | (uint16_t)lsb);
+				uint8_t b0 = payload[i * 2];
+				uint8_t b1 = payload[i * 2 + 1];
+				leVec[i] = (int16_t)(((uint16_t)b0) | ((uint16_t)b1 << 8));
+				beVec[i] = (int16_t)(((uint16_t)b0 << 8) | (uint16_t)b1);
 			}
 
-			iccRxPos = 0;
+			if (icc1dPacketCount <= 20 || (icc1dPacketCount % 50) == 0)
+			{
+				Serial.print("ICC1D PKT #");
+				Serial.println(icc1dPacketCount);
 
-			// Build and send proximity vector (5 values)
-			double proxVec[5];
-			proxVec[0] = b1.getProximity();
-			proxVec[1] = b2.getProximity();
-			proxVec[2] = b3.getProximity();
-			proxVec[3] = b4.getProximity();
-			proxVec[4] = b5.getProximity();
+				Serial.print("raw payload bytes: ");
+				for (uint8_t i = 0; i < 10; i++)
+				{
+					if (payload[i] < 0x10)
+					{
+						Serial.print("0");
+					}
+					Serial.print(payload[i], HEX);
+					if (i < 9)
+					{
+						Serial.print(" ");
+					}
+				}
+				Serial.println();
 
-			Serial1.write((uint8_t *)proxVec, sizeof(proxVec)); // 5 * 8 = 40 bytes on wire if double=8
+				Serial.print("decode LE [b0|b1<<8]: ");
+				for (uint8_t i = 0; i < 5; i++)
+				{
+					Serial.print(leVec[i]);
+					if (i < 4)
+					{
+						Serial.print(", ");
+					}
+				}
+				Serial.println();
+
+				Serial.print("decode BE [b0<<8|b1]: ");
+				for (uint8_t i = 0; i < 5; i++)
+				{
+					Serial.print(beVec[i]);
+					if (i < 4)
+					{
+						Serial.print(", ");
+					}
+				}
+				Serial.println();
+			}
+#endif
+
+			// Decode incoming 5x int16, little-endian per cell [LSB][MSB]
+			for (uint8_t i = 0; i < 5; i++)
+			{
+				uint8_t lsb = payload[i * 2];
+				uint8_t msb = payload[i * 2 + 1];
+				pressureOut[i] = (int16_t)(((uint16_t)lsb) | ((uint16_t)msb << 8));
+			}
+
+			Serial.print("ICC1D RX kPa: ");
+			for (uint8_t i = 0; i < 5; i++)
+			{
+				Serial.print(pressureOut[i]);
+				if (i < 4)
+				{
+					Serial.print(", ");
+				}
+			}
+			Serial.println();
+
+			parserState = 0;
+			payloadPos = 0;
+
+			// // test: send back proximity vector with header
+			// uint8_t rxHeader[2] = {0xAA, 0x55};
+			// double mockProx = 5.0f; // for testing
+			// Serial1.write(rxHeader, sizeof(rxHeader));
+			// // Serial.println(prox);
+			// Serial1.write((uint8_t *)&mockProx, sizeof(double));
 
 			return true;
 		}
@@ -283,8 +404,8 @@ const char *modeToString(mode m)
 		return "asymmetric";
 	case icc:
 		return "icc";
-	case icc_1d:
-		return "icc_1d";
+	case icc1d:
+		return "icc1d";
 	default:
 		return "unknown";
 	}
@@ -397,56 +518,56 @@ void loop()
 		}
 		break;
 
-	case icc:
-		Serial.println("Entered ICC mode: awaiting pressure commands on Serial1");
-		setAllOperationModes(symmetric);
-		setAllPressures(0);
-		delay(1000); // let any late USB CDC bytes arrive
-		setEnableValves(0);
+		// case icc:
+		// 	Serial.println("Entered ICC mode: awaiting pressure commands on Serial1");
+		// 	setAllOperationModes(symmetric);
+		// 	setAllPressures(0);
+		// 	delay(1000); // let any late USB CDC bytes arrive
+		// 	setEnableValves(0);
 
-		// Resync packet parsing on ICC entry in case any stale startup bytes are pending.
-		iccRxPos = 0;
+		// 	// Resync packet parsing on ICC entry in case any stale startup bytes are pending.
+		// 	iccRxPos = 0;
 
-		// flush
-		unsigned int flushedBytes = 0;
-		while (Serial1.available() > 0)
-		{
-			Serial1.read();
-			flushedBytes++;
-		}
-		delay(50); // let any late USB CDC bytes arrive
+		// 	// flush
+		// 	unsigned int flushedBytes = 0;
+		// 	while (Serial1.available() > 0)
+		// 	{
+		// 		Serial1.read();
+		// 		flushedBytes++;
+		// 	}
+		// 	delay(50); // let any late USB CDC bytes arrive
 
-		setEnableValves(1);
+		// 	setEnableValves(1);
 
-		while (Serial1.available() > 0)
-		{
-			Serial1.read();
-			flushedBytes++;
-		}
-		Serial.print("ICC mode: startup RX flush complete, discarded bytes=");
-		Serial.println(flushedBytes);
+		// 	while (Serial1.available() > 0)
+		// 	{
+		// 		Serial1.read();
+		// 		flushedBytes++;
+		// 	}
+		// 	Serial.print("ICC mode: startup RX flush complete, discarded bytes=");
+		// 	Serial.println(flushedBytes);
 
-		int pressureCmd = 0;
-		int prevPressureCmd = 0;
-		while (operationMode == icc)
-		{
-			if (tryReadIccPressure(&pressureCmd))
-			{
-				// Serial.println(pressureCmd);
-				if (prevPressureCmd != pressureCmd)
-				{
-					b1.setPressure(pressureCmd);
-					// setAllPressures(pressureCmd);
+		// 	int pressureCmd = 0;
+		// 	int prevPressureCmd = 0;
+		// 	while (operationMode == icc)
+		// 	{
+		// 		if (tryReadIccPressure(&pressureCmd))
+		// 		{
+		// 			// Serial.println(pressureCmd);
+		// 			if (prevPressureCmd != pressureCmd)
+		// 			{
+		// 				b1.setPressure(pressureCmd);
+		// 				// setAllPressures(pressureCmd);
 
-					prevPressureCmd = pressureCmd;
-				}
-			}
-		}
-		setEnableValves(0); // close all enable valves
-		break;
+		// 				prevPressureCmd = pressureCmd;
+		// 			}
+		// 		}
+		// 	}
+		// 	setEnableValves(0); // close all enable valves
+		// 	break;
 
-	case icc_1d:
-		Serial.println("Entered ICC_1D mode: awaiting 5-cell pressure vector on Serial1");
+	case icc1d:
+		Serial.println("Entered ICC1D mode: awaiting 5-cell pressure vector on Serial1");
 		setAllOperationModes(symmetric);
 		setAllPressures(0);
 		delay(1000); // let any late startup bytes arrive
@@ -464,7 +585,7 @@ void loop()
 		}
 		delay(50);
 
-		setEnableValves(1);
+		setEnableValves(0); // open all enable valves
 
 		while (Serial1.available() > 0)
 		{
@@ -478,37 +599,141 @@ void loop()
 		int16_t prevPressureCmdVec[5] = {0, 0, 0, 0, 0};
 		bool havePrevVec = false;
 
-		while (operationMode == icc_1d)
+		while (operationMode == icc1d)
 		{
 			if (tryReadIccPressureVec(pressureCmdVec))
 			{
-				bool changed = !havePrevVec;
-				if (!changed)
+				// bool changed = !havePrevVec;
+				// if (!changed)
+				// {
+				// 	for (uint8_t i = 0; i < 5; i++)
+				// 	{
+				// 		if (pressureCmdVec[i] != prevPressureCmdVec[i])
+				// 		{
+				// 			changed = true;
+				// 			break;
+				// 		}
+				// 	}
+				// }
+
+				// if (changed)
+				// {
+				// 	double proxVec[5];
+
+				// 	setEnableValves(0);
+				// 	delay(waitTimePipePressurised);
+				// 	b1.setPressure(pressureCmdVec[0]);
+				// 	setEnableValves(1);
+				// 	delay(waitTimeNextBellow);
+				// 	proxVec[0] = b1.getProximity();
+
+				// 	setEnableValves(0);
+				// 	delay(waitTimePipePressurised);
+				// 	b2.setPressure(pressureCmdVec[1]);
+				// 	setEnableValves(2);
+				// 	delay(waitTimeNextBellow);
+				// 	proxVec[1] = b2.getProximity();
+
+				// 	setEnableValves(0);
+				// 	delay(waitTimePipePressurised);
+				// 	b3.setPressure(pressureCmdVec[2]);
+				// 	setEnableValves(3);
+				// 	delay(waitTimeNextBellow);
+				// 	proxVec[2] = b3.getProximity();
+
+				// 	setEnableValves(0);
+				// 	delay(waitTimePipePressurised);
+				// 	b4.setPressure(pressureCmdVec[3]);
+				// 	setEnableValves(4);
+				// 	delay(waitTimeNextBellow);
+				// 	proxVec[3] = b4.getProximity();
+
+				// 	setEnableValves(0);
+				// 	delay(waitTimePipePressurised);
+				// 	b5.setPressure(pressureCmdVec[4]);
+				// 	setEnableValves(5);
+				// 	delay(waitTimeNextBellow);
+				// 	proxVec[4] = b5.getProximity();
+
+				// 	uint8_t rxHeader[2] = {0xAA, 0x55};
+				// 	Serial1.write(rxHeader, sizeof(rxHeader));
+				// 	Serial1.write((uint8_t *)proxVec, sizeof(proxVec));
+
+				// 	Serial.print("prox: ");
+				// 	for (uint8_t i = 0; i < 5; i++)
+				// 	{
+				// 		Serial.print(proxVec[i]);
+				// 		if (i < 4)
+				// 		{
+				// 			Serial.print(", ");
+				// 		}
+				// 		prevPressureCmdVec[i] = pressureCmdVec[i];
+				// 	}
+				// 	Serial.println();
+
+				// 	havePrevVec = true;
+				// }
+				double proxVec[5];
+
+				// icc 1 bellow 1
+				setEnableValves(0);
+				delay(waitTimePipePressurised);
+				b1.setPressure(pressureCmdVec[0]);
+				setEnableValves(1);
+				delay(waitTimeNextBellow);
+				proxVec[0] = ((17.0 + b1.getProximityForICC()) * 4.5) - 78;
+
+				// icc 2 bellow 2
+				setEnableValves(0);
+				delay(waitTimePipePressurised);
+				b2.setPressure(pressureCmdVec[1]);
+				setEnableValves(2);
+				delay(waitTimeNextBellow);
+				// proxVec[1] = 16 - b2.getProximityForICC();
+				// proxVec[1] = 11 + b2.getProximityForICC();
+				proxVec[1] = ((15.0 + b2.getProximityForICC()) * 3) - 78;
+
+				// icc 3 bellow 3
+				setEnableValves(0);
+				delay(waitTimePipePressurised);
+				b3.setPressure(pressureCmdVec[2]);
+				setEnableValves(3);
+				delay(waitTimeNextBellow);
+				// proxVec[2] = 11.0 + b3.getProximityForICC();
+				proxVec[2] = ((12.0 + b3.getProximityForICC()) * 5) - 78;
+
+				// icc 4 bellow 4
+				setEnableValves(0);
+				delay(waitTimePipePressurised);
+				b4.setPressure(pressureCmdVec[3]);
+				setEnableValves(4);
+				delay(waitTimeNextBellow);
+				// proxVec[3] = 12.0 + b4.getProximityForICC();
+				proxVec[3] = ((13.0 + b4.getProximityForICC()) * 5.5) - 78;
+
+				// icc 5 bellow 5
+				setEnableValves(0);
+				delay(waitTimePipePressurised);
+				b5.setPressure(pressureCmdVec[4]);
+				setEnableValves(5);
+				delay(waitTimeNextBellow);
+				// proxVec[4] = 12.0 + b5.getProximityForICC(); // for ICC mapping, invert proximity so that 16mm is zero and smaller values are more negative
+				proxVec[4] = ((14.0 + b5.getProximityForICC()) * 4.5) - 78;
+
+				uint8_t rxHeader[2] = {0xAA, 0x55};
+				Serial1.write(rxHeader, sizeof(rxHeader));
+				Serial1.write((uint8_t *)proxVec, sizeof(proxVec));
+
+				Serial.print("prox: ");
+				for (uint8_t i = 0; i < 5; i++)
 				{
-					for (uint8_t i = 0; i < 5; i++)
+					Serial.print(proxVec[i]);
+					if (i < 4)
 					{
-						if (pressureCmdVec[i] != prevPressureCmdVec[i])
-						{
-							changed = true;
-							break;
-						}
+						Serial.print(", ");
 					}
 				}
-
-				if (changed)
-				{
-					b1.setPressure(pressureCmdVec[0]);
-					b2.setPressure(pressureCmdVec[1]);
-					b3.setPressure(pressureCmdVec[2]);
-					b4.setPressure(pressureCmdVec[3]);
-					b5.setPressure(pressureCmdVec[4]);
-
-					for (uint8_t i = 0; i < 5; i++)
-					{
-						prevPressureCmdVec[i] = pressureCmdVec[i];
-					}
-					havePrevVec = true;
-				}
+				Serial.println();
 			}
 		}
 

@@ -36,12 +36,34 @@ double Bellow::getProximity()
 
 double Bellow::getProximityForICC()
 {
-	tcaPortSelect();																																		 // select I2C port
+	tcaPortSelect(); // select I2C port
 
 	double prox = (proximitySensor.getProximity() - proximityParameterB) / proximityParameterA;
-	
-	// ICC mapping: 16 mm is zero, then invert.
-	return 16.0 - prox;
+
+	// ICC mapping: 16 mm is zero
+	return -prox;
+}
+double Bellow::getProximityForIccNetwork()
+{
+	tcaPortSelect(); // select I2C port
+
+	double prox = (proximitySensor.getProximity() - proximityParameterB) / proximityParameterA;
+
+	// Map proximity (mm) to ICC-network value in range [-20, -70].
+	const double proxMinMM = 0.0;
+	const double proxMaxMM = 16.0;
+
+	if (prox < proxMinMM)
+	{
+		prox = proxMinMM;
+	}
+	else if (prox > proxMaxMM)
+	{
+		prox = proxMaxMM;
+	}
+
+	double t = (prox - proxMinMM) / (proxMaxMM - proxMinMM);
+	return -20.0 - 50.0 * t;
 }
 
 // define function to get the set force
