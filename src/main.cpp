@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>		// library for I2C control
 #include <Bellow.h> // include header for bellow control
+#include "icc.h"
 
 // declare and initialise variables
 #define waitTimeSymmetric 100			 // ms (symmetric mode)
@@ -29,6 +30,13 @@ Bellow b2(6, A3, 26, 28, 41.764, 1866.7, 200.86, 310.22);
 Bellow b3(5, A2, 30, 32, 33.939, 1194.8, 205.93, 229.06);
 Bellow b4(4, A1, 34, 36, 38.048, 2171.7, 171.6, 325.88);
 Bellow b5(3, A0, 38, 40, 37.509, 1788, 258.52, 372.67);
+
+// ICC state variables initialisation
+IccConfig g_cfg;
+Icc icc;
+const uint32_t STEP_INTERVAL_MS = 10;
+uint32_t next_step_ms = 0;
+float icc_v = 0.0;
 
 // function to set operation modes of all five SPA
 void setAllOperationModes(mode operationMode)
@@ -119,33 +127,33 @@ void buttonInterrupt()
 	if ((buttonTimePressed > 50) && (buttonTimePressed < 250))
 	{ // press-time must be >50 ms to avoid bouncing
 		// change operation mode to next state
-		// switch (operationMode)
-		// {
-		// case (off):
-		// 	operationMode = symmetric;
-		// 	break;
-		// case (symmetric):
-		// 	operationMode = asymmetric;
-		// 	break;
-		// case (asymmetric):
-		// 	operationMode = icc;
-		// 	break;
-		// case (icc):
-		// 	operationMode = icc1d;
-		// 	break;
-		// case (icc1d):
-		// 	operationMode = off;
-		// 	break;
-		// }
 		switch (operationMode)
 		{
 		case (off):
+			operationMode = symmetric;
+			break;
+		case (symmetric):
+			operationMode = asymmetric;
+			break;
+		case (asymmetric):
+			operationMode = single_icc;
+			break;
+		case (single_icc):
 			operationMode = icc1d;
 			break;
 		case (icc1d):
 			operationMode = off;
 			break;
 		}
+		// switch (operationMode)
+		// {
+		// case (off):
+		// 	operationMode = icc1d;
+		// 	break;
+		// case (icc1d):
+		// 	operationMode = off;
+		// 	break;
+		// }
 	}
 	buttonOldTime = millis(); // save the current time for the next button-press-time calculation
 }
@@ -402,13 +410,27 @@ const char *modeToString(mode m)
 		return "symmetric";
 	case asymmetric:
 		return "asymmetric";
-	case icc:
+	case single_icc:
 		return "icc";
 	case icc1d:
 		return "icc1d";
 	default:
 		return "unknown";
 	}
+}
+
+// Convert millivolts to kilopascals
+int mv_to_kpa(float mv)
+{
+	const float vmin = -70.0;
+	const float vmax = -23.5;
+	const float pmin = -50.0;
+	const float pmax = 50.0;
+
+	float p = pmin + ((mv - vmin) / (vmax - vmin)) * (pmax - pmin);
+	p = constrain(p, pmin, pmax); // Arduino's constrain() function
+
+	return round(p);
 }
 
 // setup function
@@ -518,53 +540,112 @@ void loop()
 		}
 		break;
 
-		// case icc:
-		// 	Serial.println("Entered ICC mode: awaiting pressure commands on Serial1");
-		// 	setAllOperationModes(symmetric);
-		// 	setAllPressures(0);
-		// 	delay(1000); // let any late USB CDC bytes arrive
-		// 	setEnableValves(0);
+	case single_icc:
 
-		// 	// Resync packet parsing on ICC entry in case any stale startup bytes are pending.
-		// 	iccRxPos = 0;
+		// Bellow initialisation for ICC mode
+		Serial.println("Entered ICC mode");
+		setAllOperationModes(symmetric);
+		setAllPressures(0);
+		delay(100); // let pressure settle
+		setEnableValves(0);
+		delay(100); // let pressure settle
+		setEnableValves(1);
+		setEnableValves(2);
+		setEnableValves(3);
+		setEnableValves(4);
+		setEnableValves(5);
+		int pressureCmd = 0;
+		int prevPressureCmd = 0;
 
-		// 	// flush
-		// 	unsigned int flushedBytes = 0;
-		// 	while (Serial1.available() > 0)
+		// ICC initialisation
+
+		uint32_t icc_start_ms = millis();
+		icc_default_config(&g_cfg);
+		icc_init(&icc, &g_cfg);
+		next_step_ms = millis() + STEP_INTERVAL_MS;
+
+		while (operationMode == single_icc)
+		{
+			while ((int32_t)(millis() - next_step_ms) >= 0)
+			{
+				(void)icc_hioa(&icc, &g_cfg, STEP_INTERVAL_MS);
+				next_step_ms += STEP_INTERVAL_MS;
+				icc_v = icc.v;
+
+				// Serial.print(millis() - icc_start_ms);
+				// Serial.print(',');
+				// Serial.print(icc.v, 4);
+				// Serial.print(',');
+				// Serial.print((int)icc_state_index(&icc));
+
+				// // Convert to kPa
+				// pressureCmd = mv_to_kpa(icc_v);
+				// Serial.print(',');
+				// Serial.println(pressureCmd);
+
+				// Serial.println(pressureCmd);
+				if (prevPressureCmd != pressureCmd)
+				{
+					// b1.setPressure(pressureCmd);
+					setAllPressures(pressureCmd);
+
+					prevPressureCmd = pressureCmd;
+				}
+
+				// Send signal to PC
+				uint8_t rxHeader[2] = {0xAA, 0x55};
+				Serial1.write(rxHeader, sizeof(rxHeader));
+				Serial1.write((uint8_t *)&icc_v, sizeof(icc_v));
+			}
+			// setEnableValves(0); // close all enable valves
+		}
+
+		// Serial.println("Entered ICC mode: awaiting pressure commands on Serial1");
+		// setAllOperationModes(symmetric);
+		// setAllPressures(0);
+		// delay(1000); // let any late USB CDC bytes arrive
+		// setEnableValves(0);
+
+		// // Resync packet parsing on ICC entry in case any stale startup bytes are pending.
+		// iccRxPos = 0;
+
+		// // flush
+		// unsigned int flushedBytes = 0;
+		// while (Serial1.available() > 0)
+		// {
+		// 	Serial1.read();
+		// 	flushedBytes++;
+		// }
+		// delay(50); // let any late USB CDC bytes arrive
+
+		// setEnableValves(1);
+
+		// while (Serial1.available() > 0)
+		// {
+		// 	Serial1.read();
+		// 	flushedBytes++;
+		// }
+		// Serial.print("ICC mode: startup RX flush complete, discarded bytes=");
+		// Serial.println(flushedBytes);
+
+		// int pressureCmd = 0;
+		// int prevPressureCmd = 0;
+		// while (operationMode == single_icc)
+		// {
+		// 	if (tryReadIccPressure(&pressureCmd))
 		// 	{
-		// 		Serial1.read();
-		// 		flushedBytes++;
-		// 	}
-		// 	delay(50); // let any late USB CDC bytes arrive
-
-		// 	setEnableValves(1);
-
-		// 	while (Serial1.available() > 0)
-		// 	{
-		// 		Serial1.read();
-		// 		flushedBytes++;
-		// 	}
-		// 	Serial.print("ICC mode: startup RX flush complete, discarded bytes=");
-		// 	Serial.println(flushedBytes);
-
-		// 	int pressureCmd = 0;
-		// 	int prevPressureCmd = 0;
-		// 	while (operationMode == icc)
-		// 	{
-		// 		if (tryReadIccPressure(&pressureCmd))
+		// 		// Serial.println(pressureCmd);
+		// 		if (prevPressureCmd != pressureCmd)
 		// 		{
-		// 			// Serial.println(pressureCmd);
-		// 			if (prevPressureCmd != pressureCmd)
-		// 			{
-		// 				b1.setPressure(pressureCmd);
-		// 				// setAllPressures(pressureCmd);
+		// 			b1.setPressure(pressureCmd);
+		// 			// setAllPressures(pressureCmd);
 
-		// 				prevPressureCmd = pressureCmd;
-		// 			}
+		// 			prevPressureCmd = pressureCmd;
 		// 		}
 		// 	}
-		// 	setEnableValves(0); // close all enable valves
-		// 	break;
+		// }
+		// setEnableValves(0); // close all enable valves
+		break;
 
 	case icc1d:
 		Serial.println("Entered ICC1D mode: awaiting 5-cell pressure vector on Serial1");

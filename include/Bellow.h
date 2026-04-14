@@ -7,7 +7,7 @@ enum mode
 	off = 0,
 	symmetric = 1,
 	asymmetric = 2,
-	icc = 3,
+	single_icc = 3,
 	icc1d = 4
 };
 
