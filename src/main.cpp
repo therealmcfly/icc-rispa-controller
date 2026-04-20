@@ -2,6 +2,21 @@
 #include <Wire.h>		// library for I2C control
 #include <Bellow.h> // include header for bellow control
 #include "icc.h"
+#include "path.h"
+
+#define TIME_STEP_MS_SINGLE 100
+#define TIME_STEP_MS_1D 500
+#define CONTRACTION_THRESHOLD -30.0f
+
+// ICC LAYER CONFIGURATION
+#define ICC_H_COUNT 5
+#define ICC_V_COUNT 1
+#define PACEMAKER_CELL_ROW 0
+#define PACEMAKER_CELL_COL 4
+
+Icc icc;
+uint32_t step_interval_ms = TIME_STEP_MS_SINGLE;
+uint32_t next_step_ms = 0;
 
 // declare and initialise variables
 #define waitTimeSymmetric 100			 // ms (symmetric mode)
@@ -32,11 +47,11 @@ Bellow b4(4, A1, 34, 36, 38.048, 2171.7, 171.6, 325.88);
 Bellow b5(3, A0, 38, 40, 37.509, 1788, 258.52, 372.67);
 
 // ICC state variables initialisation
-IccConfig g_cfg;
-Icc icc;
-const uint32_t STEP_INTERVAL_MS = 10;
-uint32_t next_step_ms = 0;
-float icc_v = 0.0;
+// IccConfig g_cfg;
+// Icc icc;
+// const uint32_t step_interval_ms = 10;
+// uint32_t next_step_ms = 0;
+// float icc_v = 0.0;
 
 // function to set operation modes of all five SPA
 void setAllOperationModes(mode operationMode)
@@ -127,33 +142,57 @@ void buttonInterrupt()
 	if ((buttonTimePressed > 50) && (buttonTimePressed < 250))
 	{ // press-time must be >50 ms to avoid bouncing
 		// change operation mode to next state
-		switch (operationMode)
-		{
-		case (off):
-			operationMode = symmetric;
-			break;
-		case (symmetric):
-			operationMode = asymmetric;
-			break;
-		case (asymmetric):
-			operationMode = single_icc;
-			break;
-		case (single_icc):
-			operationMode = icc1d;
-			break;
-		case (icc1d):
-			operationMode = off;
-			break;
-		}
 		// switch (operationMode)
 		// {
 		// case (off):
+		// 	operationMode = symmetric;
+		// 	break;
+		// case (symmetric):
+		// 	operationMode = asymmetric;
+		// 	break;
+		// case (asymmetric):
+		// 	operationMode = single_icc;
+		// 	break;
+		// case (single_icc):
 		// 	operationMode = icc1d;
 		// 	break;
 		// case (icc1d):
 		// 	operationMode = off;
 		// 	break;
 		// }
+		// switch (operationMode)
+		// {
+		// case (off):
+		// 	operationMode = single_icc;
+		// 	break;
+		// case (single_icc):
+		// 	operationMode = single_icc_new;
+		// 	break;
+		// case (single_icc_new):
+		// 	operationMode = id_icc;
+		// 	break;
+		// case (id_icc):
+		// 	operationMode = id_icc_new;
+		// 	break;
+		// case (id_icc_new):
+		// 	operationMode = off;
+		// 	break;
+		// }
+		switch (operationMode)
+		{
+		case (off):
+			operationMode = single_icc;
+			break;
+		case (single_icc):
+			operationMode = single_icc_new;
+			break;
+		case (single_icc_new):
+			operationMode = off;
+			break;
+		default:
+			operationMode = off;
+			break;
+		}
 	}
 	buttonOldTime = millis(); // save the current time for the next button-press-time calculation
 }
@@ -402,18 +441,35 @@ bool tryReadIccPressureVec(int16_t pressureOut[5])
 
 const char *modeToString(mode m)
 {
+	// switch (m)
+	// {
+	// case off:
+	// 	return "off";
+	// case symmetric:
+	// 	return "symmetric";
+	// case asymmetric:
+	// 	return "asymmetric";
+	// case single_icc:
+	// 	return "icc";
+	// case icc1d:
+	// 	return "icc1d";
+	// default:
+	// 	return "unknown";
+	// }
 	switch (m)
 	{
 	case off:
 		return "off";
+	case single_icc:
+		return "single_icc";
+	case single_icc_new:
+		return "single_icc_new";
+	case icc_1d:
+		return "1d_icc";
+	case icc_1d_new:
+		return "1d_icc_new";
 	case symmetric:
 		return "symmetric";
-	case asymmetric:
-		return "asymmetric";
-	case single_icc:
-		return "icc";
-	case icc1d:
-		return "icc1d";
 	default:
 		return "unknown";
 	}
@@ -492,58 +548,69 @@ void loop()
 		break;
 
 	case symmetric:
-		setAllOperationModes(operationMode);
-		for (int i = 0; i < 200; i++)
-		{
-			if (operationMode == symmetric)
-			{																													 // check if button was pressed during for loop
-				setAllPressures(round(65 * sin(2 * PI / 200 * i) + 15)); // set new air pressure to pessure valves
-				delay(waitTimeSymmetric);																 // waiting time until next pressure is set
-				Serial.print("");
-			}
-		}
+		setAllOperationModes(symmetric);
+		setAllPressures(0);
 		break;
 
-	case asymmetric:
-		setAllOperationModes(operationMode);
-		for (int i = 0; i < 50; i++)
-		{
-			if (operationMode == asymmetric)
-			{																												// check if button was pressed during for loop
-				setEnableValves(0);																		// close all enable valves
-				b1.setPressure(round(45 * sin(2 * PI / 50 * i) - 5)); // set new air pressure to pessure valves
-				delay(waitTimePipePressurised);												// waiting time until the new air pressure has set in the pipes
-				setEnableValves(1);																		// open enable valve of bellow 1
-				delay(waitTimeNextBellow);														// waiting time until the new air pressure has set in the bellow
-				setEnableValves(0);																		// close all enable valves
-				b2.setPressure(round(55 * sin(2 * PI / 50 * i) + 5)); // ...
-				delay(waitTimePipePressurised);
-				setEnableValves(2);
-				delay(waitTimeNextBellow);
-				setEnableValves(0);
-				b3.setPressure(round(40 * sin(2 * PI / 50 * i) - 10));
-				delay(waitTimePipePressurised);
-				setEnableValves(3);
-				delay(waitTimeNextBellow);
-				setEnableValves(0);
-				b4.setPressure(round(69 * sin(2 * PI / 50 * i) + 17));
-				delay(waitTimePipePressurised);
-				setEnableValves(4);
-				delay(waitTimeNextBellow);
-				setEnableValves(0);
-				b5.setPressure(round(65 * sin(2 * PI / 50 * i) + 15));
-				delay(waitTimePipePressurised);
-				setEnableValves(5);
-				delay(waitTimeNextBellow);
-				Serial.print("");
-			}
-		}
-		break;
+		// case symmetric:
+		// 	setAllOperationModes(operationMode);
+		// 	for (int i = 0; i < 200; i++)
+		// 	{
+		// 		if (operationMode == symmetric)
+		// 		{																													 // check if button was pressed during for loop
+		// 			setAllPressures(round(65 * sin(2 * PI / 200 * i) + 15)); // set new air pressure to pessure valves
+		// 			delay(waitTimeSymmetric);																 // waiting time until next pressure is set
+		// 			Serial.print("");
+		// 		}
+		// 	}
+		// 	break;
+
+		// case asymmetric:
+		// 	setAllOperationModes(operationMode);
+		// 	for (int i = 0; i < 50; i++)
+		// 	{
+		// 		if (operationMode == asymmetric)
+		// 		{																												// check if button was pressed during for loop
+		// 			setEnableValves(0);																		// close all enable valves
+		// 			b1.setPressure(round(45 * sin(2 * PI / 50 * i) - 5)); // set new air pressure to pessure valves
+		// 			delay(waitTimePipePressurised);												// waiting time until the new air pressure has set in the pipes
+		// 			setEnableValves(1);																		// open enable valve of bellow 1
+		// 			delay(waitTimeNextBellow);														// waiting time until the new air pressure has set in the bellow
+		// 			setEnableValves(0);																		// close all enable valves
+		// 			b2.setPressure(round(55 * sin(2 * PI / 50 * i) + 5)); // ...
+		// 			delay(waitTimePipePressurised);
+		// 			setEnableValves(2);
+		// 			delay(waitTimeNextBellow);
+		// 			setEnableValves(0);
+		// 			b3.setPressure(round(40 * sin(2 * PI / 50 * i) - 10));
+		// 			delay(waitTimePipePressurised);
+		// 			setEnableValves(3);
+		// 			delay(waitTimeNextBellow);
+		// 			setEnableValves(0);
+		// 			b4.setPressure(round(69 * sin(2 * PI / 50 * i) + 17));
+		// 			delay(waitTimePipePressurised);
+		// 			setEnableValves(4);
+		// 			delay(waitTimeNextBellow);
+		// 			setEnableValves(0);
+		// 			b5.setPressure(round(65 * sin(2 * PI / 50 * i) + 15));
+		// 			delay(waitTimePipePressurised);
+		// 			setEnableValves(5);
+		// 			delay(waitTimeNextBellow);
+		// 			Serial.print("");
+		// 		}
+		// 	}
+		// 	break;
 
 	case single_icc:
+	{
+		icc_init(&icc, true);
+
+		step_interval_ms = TIME_STEP_MS_SINGLE;
+		next_step_ms = 0;
+
+		printf("mode: %s\n", modeToString(operationMode));
 
 		// Bellow initialisation for ICC mode
-		Serial.println("Entered ICC mode");
 		setAllOperationModes(symmetric);
 		setAllPressures(0);
 		delay(100); // let pressure settle
@@ -557,20 +624,18 @@ void loop()
 		int pressureCmd = 0;
 		int prevPressureCmd = 0;
 
-		// ICC initialisation
-
-		uint32_t icc_start_ms = millis();
-		icc_default_config(&g_cfg);
-		icc_init(&icc, &g_cfg);
-		next_step_ms = millis() + STEP_INTERVAL_MS;
+		//
+		next_step_ms = millis() + step_interval_ms;
 
 		while (operationMode == single_icc)
 		{
 			while ((int32_t)(millis() - next_step_ms) >= 0)
 			{
-				(void)icc_hioa(&icc, &g_cfg, STEP_INTERVAL_MS);
-				next_step_ms += STEP_INTERVAL_MS;
-				icc_v = icc.v;
+				(void)icc_update(&icc, step_interval_ms);
+
+				next_step_ms += step_interval_ms;
+
+				pressureCmd = mv_to_kpa(icc.v);
 
 				// Serial.print(millis() - icc_start_ms);
 				// Serial.print(',');
@@ -595,9 +660,10 @@ void loop()
 				// Send signal to PC
 				uint8_t rxHeader[2] = {0xAA, 0x55};
 				Serial1.write(rxHeader, sizeof(rxHeader));
-				Serial1.write((uint8_t *)&icc_v, sizeof(icc_v));
+				Serial1.write((uint8_t *)&icc.v, sizeof(icc.v));
+				float prox = (float)((17.0 + b1.getProximityForICC()) * 4.5) - 78;
+				Serial1.write((uint8_t *)&prox, sizeof(prox));
 			}
-			// setEnableValves(0); // close all enable valves
 		}
 
 		// Serial.println("Entered ICC mode: awaiting pressure commands on Serial1");
@@ -646,8 +712,81 @@ void loop()
 		// }
 		// setEnableValves(0); // close all enable valves
 		break;
+	}
+	case single_icc_new:
+	{
+		icc_init(&icc, true);
 
-	case icc1d:
+		step_interval_ms = TIME_STEP_MS_SINGLE;
+		next_step_ms = 0;
+
+		printf("mode: %s\n", modeToString(operationMode));
+
+		// Bellow initialisation for ICC mode
+		setAllOperationModes(symmetric);
+		setAllPressures(0);
+		delay(100); // let pressure settle
+		setEnableValves(0);
+		delay(100); // let pressure settle
+		setEnableValves(1);
+		setEnableValves(2);
+		setEnableValves(3);
+		setEnableValves(4);
+		setEnableValves(5);
+		int is_contracting = 0;
+		int prev_is_contracting = 0;
+
+		//
+		next_step_ms = millis() + step_interval_ms;
+
+		while (operationMode == single_icc_new)
+		{
+			while ((int32_t)(millis() - next_step_ms) >= 0)
+			{
+				(void)icc_update(&icc, step_interval_ms);
+
+				next_step_ms += step_interval_ms;
+				if (icc.v > CONTRACTION_THRESHOLD)
+				{
+					is_contracting = 1;
+				}
+				else
+				{
+					is_contracting = 0;
+				}
+
+				if (prev_is_contracting != is_contracting)
+				{
+					is_contracting ? setAllPressures(80) : setAllPressures(-50);
+					prev_is_contracting = is_contracting;
+				}
+
+				// Serial.print(millis() - icc_start_ms);
+				// Serial.print(',');
+				// Serial.print(icc.v, 4);
+				// Serial.print(',');
+				// Serial.print((int)icc_state_index(&icc));
+
+				// // Convert to kPa
+				// pressureCmd = mv_to_kpa(icc_v);
+				// Serial.print(',');
+				// Serial.println(pressureCmd);
+
+				// Serial.println(pressureCmd);
+
+				// Send signal to PC
+				uint8_t rxHeader[2] = {0xAA, 0x55};
+				Serial1.write(rxHeader, sizeof(rxHeader));
+				Serial1.write((uint8_t *)&icc.v, sizeof(icc.v));
+				float prox = (float)((17.0 + b1.getProximityForICC()) * 4.5) - 78;
+				Serial1.write((uint8_t *)&prox, sizeof(prox));
+			}
+		}
+		break;
+	}
+
+	case icc_1d_new:
+	{
 		Serial.println("Entered ICC1D mode: awaiting 5-cell pressure vector on Serial1");
 		setAllOperationModes(symmetric);
 		setAllPressures(0);
@@ -677,10 +816,8 @@ void loop()
 		Serial.println(flushedVecBytes);
 
 		int16_t pressureCmdVec[5] = {0, 0, 0, 0, 0};
-		int16_t prevPressureCmdVec[5] = {0, 0, 0, 0, 0};
-		bool havePrevVec = false;
 
-		while (operationMode == icc1d)
+		while (operationMode == icc_1d || operationMode == icc_1d_new)
 		{
 			if (tryReadIccPressureVec(pressureCmdVec))
 			{
@@ -819,6 +956,12 @@ void loop()
 		}
 
 		setEnableValves(0); // close all enable valves
+		break;
+	}
+
+	default:
+		setAllOperationModes(symmetric);
+		setAllPressures(0);
 		break;
 	}
 }

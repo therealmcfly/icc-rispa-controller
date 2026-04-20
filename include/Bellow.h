@@ -4,11 +4,17 @@
 // create enum for operation modes for better code readability
 enum mode
 {
+	// off = 0,
+	// symmetric = 1,
+	// asymmetric = 2,
+	// single_icc = 3,
+	// icc1d = 4
 	off = 0,
 	symmetric = 1,
-	asymmetric = 2,
-	single_icc = 3,
-	icc1d = 4
+	single_icc = 2,
+	single_icc_new = 3,
+	icc_1d = 4,
+	icc_1d_new = 5
 };
 
 // declaration of new class Bellow
