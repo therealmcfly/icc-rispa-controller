@@ -5,7 +5,7 @@
 #include "path.h"
 
 #define TIME_STEP_MS_SINGLE 100
-#define TIME_STEP_MS_1D 250
+#define TIME_STEP_MS_1D 500
 #define CONTRACTION_THRESHOLD -30.0f
 
 // ICC LAYER CONFIGURATION
@@ -20,8 +20,8 @@ uint32_t next_step_ms = 0;
 
 // declare and initialise variables
 #define waitTimeSymmetric 100			 // ms (symmetric mode)
-#define waitTimePipePressurised 15 // ms (asymmetric mode)
-#define waitTimeNextBellow 30			 // ms (asymmetric mode)
+#define waitTimePipePressurised 30 // ms
+#define waitTimeNextBellow 50			 // ms
 #define buttonPin 3
 #define PI 3.1415926535897932384626433832795
 mode operationMode = off;
@@ -142,57 +142,7 @@ void buttonInterrupt()
 	if ((buttonTimePressed > 50) && (buttonTimePressed < 250))
 	{ // press-time must be >50 ms to avoid bouncing
 		// change operation mode to next state
-		// switch (operationMode)
-		// {
-		// case (off):
-		// 	operationMode = symmetric;
-		// 	break;
-		// case (symmetric):
-		// 	operationMode = asymmetric;
-		// 	break;
-		// case (asymmetric):
-		// 	operationMode = single_icc;
-		// 	break;
-		// case (single_icc):
-		// 	operationMode = icc1d;
-		// 	break;
-		// case (icc1d):
-		// 	operationMode = off;
-		// 	break;
-		// }
-		// switch (operationMode)
-		// {
-		// case (off):
-		// 	operationMode = single_icc;
-		// 	break;
-		// case (single_icc):
-		// 	operationMode = single_icc_new;
-		// 	break;
-		// case (single_icc_new):
-		// 	operationMode = id_icc;
-		// 	break;
-		// case (id_icc):
-		// 	operationMode = id_icc_new;
-		// 	break;
-		// case (id_icc_new):
-		// 	operationMode = off;
-		// 	break;
-		// }
 		switch (operationMode)
-		// {
-		// case (off):
-		// 	operationMode = single_icc;
-		// 	break;
-		// case (single_icc):
-		// 	operationMode = single_icc_new;
-		// 	break;
-		// case (single_icc_new):
-		// 	operationMode = off;
-		// 	break;
-		// default:
-		// 	operationMode = off;
-		// 	break;
-		// }
 		{
 		case (off):
 			operationMode = single_icc;
@@ -273,209 +223,8 @@ void printData()
 	Serial.println();
 }
 
-// read one binary big-endian int16 pressure command from Serial1 (non-blocking)
-bool tryReadIccPressure(int *pressureOut)
-{
-	while (Serial1.available() > 0)
-	{
-		uint8_t rxByte = (uint8_t)Serial1.read();
-		iccRxBytes[iccRxPos++] = rxByte;
-
-		// Serial.print("ICC RX byte[");
-		// Serial.print(iccRxPos - 1);
-		// Serial.print("]=0x");
-		// if (rxByte < 0x10)
-		// {
-		// 	Serial.print("0");
-		// }
-		// Serial.println(rxByte, HEX);
-
-		if (iccRxPos == 2)
-		{
-			// ICC data arrives on Serial1 as big-endian int16: byte[0] is MSB, byte[1] is LSB.
-			*pressureOut = (int)(int16_t)((uint16_t)iccRxBytes[0] | ((uint16_t)iccRxBytes[1] << 8));
-
-			// Serial.print("ICC RX packet: [0x");
-			// if (iccRxBytes[0] < 0x10)
-			// {
-			// 	Serial.print("0");
-			// }
-			// Serial.print(iccRxBytes[0], HEX);
-			// Serial.print(", 0x");
-			// if (iccRxBytes[1] < 0x10)
-			// {
-			// 	Serial.print("0");
-			// }
-			// Serial.print(iccRxBytes[1], HEX);
-			// Serial.print("] => ");
-			// Serial.println(*pressureOut);
-
-			iccRxPos = 0;
-
-			double prox = b1.getProximity();
-			// double prox = 5.0f; // for testing
-			// Serial.println(prox);
-			Serial1.write((uint8_t *)&prox, sizeof(double));
-			return true;
-		}
-	}
-	return false;
-}
-
-bool tryReadIccPressureVec(int16_t pressureOut[5])
-{
-	static const uint8_t SOF0 = 0xAA;
-	static const uint8_t SOF1 = 0x55;
-	static uint8_t payload[10];			// 5 * int16
-	static uint8_t parserState = 0; // 0: wait SOF0, 1: wait SOF1, 2: read payload
-	static uint8_t payloadPos = 0;
-	static uint32_t icc1dPacketCount = 0;
-
-	while (Serial1.available() > 0)
-	{
-		uint8_t rxByte = (uint8_t)Serial1.read();
-
-		if (parserState == 0)
-		{
-			if (rxByte == SOF0)
-			{
-				parserState = 1;
-			}
-			continue;
-		}
-
-		if (parserState == 1)
-		{
-			if (rxByte == SOF1)
-			{
-				parserState = 2;
-				payloadPos = 0;
-			}
-			else if (rxByte == SOF0)
-			{
-				parserState = 1;
-			}
-			else
-			{
-				parserState = 0;
-			}
-			continue;
-		}
-
-		payload[payloadPos++] = rxByte;
-
-		if (payloadPos == 10)
-		{
-			icc1dPacketCount++;
-
-#ifdef ICC1D_PACKET_DEBUG
-			int16_t leVec[5];
-			int16_t beVec[5];
-			for (uint8_t i = 0; i < 5; i++)
-			{
-				uint8_t b0 = payload[i * 2];
-				uint8_t b1 = payload[i * 2 + 1];
-				leVec[i] = (int16_t)(((uint16_t)b0) | ((uint16_t)b1 << 8));
-				beVec[i] = (int16_t)(((uint16_t)b0 << 8) | (uint16_t)b1);
-			}
-
-			if (icc1dPacketCount <= 20 || (icc1dPacketCount % 50) == 0)
-			{
-				Serial.print("ICC1D PKT #");
-				Serial.println(icc1dPacketCount);
-
-				Serial.print("raw payload bytes: ");
-				for (uint8_t i = 0; i < 10; i++)
-				{
-					if (payload[i] < 0x10)
-					{
-						Serial.print("0");
-					}
-					Serial.print(payload[i], HEX);
-					if (i < 9)
-					{
-						Serial.print(" ");
-					}
-				}
-				Serial.println();
-
-				Serial.print("decode LE [b0|b1<<8]: ");
-				for (uint8_t i = 0; i < 5; i++)
-				{
-					Serial.print(leVec[i]);
-					if (i < 4)
-					{
-						Serial.print(", ");
-					}
-				}
-				Serial.println();
-
-				Serial.print("decode BE [b0<<8|b1]: ");
-				for (uint8_t i = 0; i < 5; i++)
-				{
-					Serial.print(beVec[i]);
-					if (i < 4)
-					{
-						Serial.print(", ");
-					}
-				}
-				Serial.println();
-			}
-#endif
-
-			// Decode incoming 5x int16, little-endian per cell [LSB][MSB]
-			for (uint8_t i = 0; i < 5; i++)
-			{
-				uint8_t lsb = payload[i * 2];
-				uint8_t msb = payload[i * 2 + 1];
-				pressureOut[i] = (int16_t)(((uint16_t)lsb) | ((uint16_t)msb << 8));
-			}
-
-			Serial.print("ICC1D RX kPa: ");
-			for (uint8_t i = 0; i < 5; i++)
-			{
-				Serial.print(pressureOut[i]);
-				if (i < 4)
-				{
-					Serial.print(", ");
-				}
-			}
-			Serial.println();
-
-			parserState = 0;
-			payloadPos = 0;
-
-			// // test: send back proximity vector with header
-			// uint8_t rxHeader[2] = {0xAA, 0x55};
-			// double mockProx = 5.0f; // for testing
-			// Serial1.write(rxHeader, sizeof(rxHeader));
-			// // Serial.println(prox);
-			// Serial1.write((uint8_t *)&mockProx, sizeof(double));
-
-			return true;
-		}
-	}
-
-	return false;
-}
-
 const char *modeToString(mode m)
 {
-	// switch (m)
-	// {
-	// case off:
-	// 	return "off";
-	// case symmetric:
-	// 	return "symmetric";
-	// case asymmetric:
-	// 	return "asymmetric";
-	// case single_icc:
-	// 	return "icc";
-	// case icc1d:
-	// 	return "icc1d";
-	// default:
-	// 	return "unknown";
-	// }
 	switch (m)
 	{
 	case off:
@@ -501,7 +250,7 @@ int mv_to_kpa(float mv)
 	const float vmin = -70.0;
 	const float vmax = -23.5;
 	const float pmin = -50.0;
-	const float pmax = 50.0;
+	const float pmax = 55.0;
 
 	float p = pmin + ((mv - vmin) / (vmax - vmin)) * (pmax - pmin);
 	p = constrain(p, pmin, pmax); // Arduino's constrain() function
@@ -579,19 +328,13 @@ void loop()
 		step_interval_ms = TIME_STEP_MS_SINGLE;
 		next_step_ms = 0;
 
-		printf("mode: %s\n", modeToString(operationMode));
-
 		// Bellow initialisation for ICC mode
 		setAllOperationModes(symmetric);
 		setAllPressures(0);
 		delay(100); // let pressure settle
 		setEnableValves(0);
-		delay(100); // let pressure settle
-		setEnableValves(1);
-		setEnableValves(2);
-		setEnableValves(3);
-		setEnableValves(4);
-		setEnableValves(5);
+		delay(100);					// let pressure settle
+		setEnableValves(6); // enable all bellows
 		int pressureCmd = 0;
 		int prevPressureCmd = 0;
 
@@ -608,18 +351,6 @@ void loop()
 
 				pressureCmd = mv_to_kpa(icc.v);
 
-				// Serial.print(millis() - icc_start_ms);
-				// Serial.print(',');
-				// Serial.print(icc.v, 4);
-				// Serial.print(',');
-				// Serial.print((int)icc_state_index(&icc));
-
-				// // Convert to kPa
-				// pressureCmd = mv_to_kpa(icc_v);
-				// Serial.print(',');
-				// Serial.println(pressureCmd);
-
-				// Serial.println(pressureCmd);
 				if (prevPressureCmd != pressureCmd)
 				{
 					// b1.setPressure(pressureCmd);
@@ -636,52 +367,6 @@ void loop()
 				Serial1.write((uint8_t *)&prox, sizeof(prox));
 			}
 		}
-
-		// Serial.println("Entered ICC mode: awaiting pressure commands on Serial1");
-		// setAllOperationModes(symmetric);
-		// setAllPressures(0);
-		// delay(1000); // let any late USB CDC bytes arrive
-		// setEnableValves(0);
-
-		// // Resync packet parsing on ICC entry in case any stale startup bytes are pending.
-		// iccRxPos = 0;
-
-		// // flush
-		// unsigned int flushedBytes = 0;
-		// while (Serial1.available() > 0)
-		// {
-		// 	Serial1.read();
-		// 	flushedBytes++;
-		// }
-		// delay(50); // let any late USB CDC bytes arrive
-
-		// setEnableValves(1);
-
-		// while (Serial1.available() > 0)
-		// {
-		// 	Serial1.read();
-		// 	flushedBytes++;
-		// }
-		// Serial.print("ICC mode: startup RX flush complete, discarded bytes=");
-		// Serial.println(flushedBytes);
-
-		// int pressureCmd = 0;
-		// int prevPressureCmd = 0;
-		// while (operationMode == single_icc)
-		// {
-		// 	if (tryReadIccPressure(&pressureCmd))
-		// 	{
-		// 		// Serial.println(pressureCmd);
-		// 		if (prevPressureCmd != pressureCmd)
-		// 		{
-		// 			b1.setPressure(pressureCmd);
-		// 			// setAllPressures(pressureCmd);
-
-		// 			prevPressureCmd = pressureCmd;
-		// 		}
-		// 	}
-		// }
-		// setEnableValves(0); // close all enable valves
 		break;
 	}
 	case single_icc_new:
@@ -691,19 +376,13 @@ void loop()
 		step_interval_ms = TIME_STEP_MS_SINGLE;
 		next_step_ms = 0;
 
-		printf("mode: %s\n", modeToString(operationMode));
-
 		// Bellow initialisation for ICC mode
 		setAllOperationModes(symmetric);
 		setAllPressures(0);
 		delay(100); // let pressure settle
 		setEnableValves(0);
-		delay(100); // let pressure settle
-		setEnableValves(1);
-		setEnableValves(2);
-		setEnableValves(3);
-		setEnableValves(4);
-		setEnableValves(5);
+		delay(100);					// let pressure settle
+		setEnableValves(6); // enable all bellows
 		int is_contracting = 0;
 		int prev_is_contracting = 0;
 
@@ -731,19 +410,6 @@ void loop()
 					is_contracting ? setAllPressures(80) : setAllPressures(-50);
 					prev_is_contracting = is_contracting;
 				}
-
-				// Serial.print(millis() - icc_start_ms);
-				// Serial.print(',');
-				// Serial.print(icc.v, 4);
-				// Serial.print(',');
-				// Serial.print((int)icc_state_index(&icc));
-
-				// // Convert to kPa
-				// pressureCmd = mv_to_kpa(icc_v);
-				// Serial.print(',');
-				// Serial.println(pressureCmd);
-
-				// Serial.println(pressureCmd);
 
 				// Send signal to PC
 				uint8_t rxHeader[2] = {0xAA, 0x55};
@@ -822,8 +488,6 @@ void loop()
 		bellows[0][3] = &b4;
 		bellows[0][4] = &b5;
 
-		printf("mode: %s\n", modeToString(operationMode));
-
 		// Bellow initialisation for ICC mode
 		setAllOperationModes(symmetric);
 		setAllPressures(0);
@@ -842,11 +506,11 @@ void loop()
 					for (size_t j = 0; j < ICC_H_COUNT; j++)
 					{
 						(void)icc_update(&iccs[i][j], step_interval_ms);
-						setEnableValves(0);
-						delay(waitTimePipePressurised);
 						bellows[i][j]->setPressure(mv_to_kpa(iccs[i][j].v));
+						delay(waitTimePipePressurised);
 						setEnableValves(j + 1);
 						delay(waitTimeNextBellow);
+						setEnableValves(0);
 						proxLogVec[i][j] = bellows[i][j]->getProximityForICC();
 					}
 				}
@@ -963,8 +627,6 @@ void loop()
 		bellows[0][3] = &b4;
 		bellows[0][4] = &b5;
 
-		printf("mode: %s\n", modeToString(operationMode));
-
 		// Bellow initialisation for ICC mode
 		setAllOperationModes(symmetric);
 		setAllPressures(0);
@@ -983,11 +645,11 @@ void loop()
 					for (size_t j = 0; j < ICC_H_COUNT; j++)
 					{
 						(void)icc_update(&iccs[i][j], step_interval_ms);
-						setEnableValves(0);
-						delay(waitTimePipePressurised);
 						bellows[i][j]->setPressure(iccs[i][j].v > CONTRACTION_THRESHOLD ? 80 : -50);
+						delay(waitTimePipePressurised);
 						setEnableValves(j + 1);
 						delay(waitTimeNextBellow);
+						setEnableValves(0);
 						proxLogVec[i][j] = bellows[i][j]->getProximityForICC();
 					}
 				}
@@ -1013,7 +675,7 @@ void loop()
 				// icc 4 bellow 4
 				proxLogVec[0][3] = ((13.0 + proxLogVec[0][3]) * 5.5) - 78;
 				// icc 5 bellow 5
-				proxLogVec[0][4] = ((14.0 + proxLogVec[0][3]) * 4.5) - 78;
+				proxLogVec[0][4] = ((14.0 + proxLogVec[0][4]) * 4.5) - 78;
 
 				// Send ICC states over Serial1
 				uint8_t rxHeader[2] = {0xAA, 0x55};
