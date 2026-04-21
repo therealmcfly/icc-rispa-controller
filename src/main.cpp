@@ -5,7 +5,7 @@
 #include "path.h"
 
 #define TIME_STEP_MS_SINGLE 100
-#define TIME_STEP_MS_1D 500
+#define TIME_STEP_MS_1D 250
 #define CONTRACTION_THRESHOLD -30.0f
 
 // ICC LAYER CONFIGURATION
@@ -20,8 +20,8 @@ uint32_t next_step_ms = 0;
 
 // declare and initialise variables
 #define waitTimeSymmetric 100			 // ms (symmetric mode)
-#define waitTimePipePressurised 60 // ms (asymmetric mode)
-#define waitTimeNextBellow 140		 // ms (asymmetric mode)
+#define waitTimePipePressurised 15 // ms (asymmetric mode)
+#define waitTimeNextBellow 30			 // ms (asymmetric mode)
 #define buttonPin 3
 #define PI 3.1415926535897932384626433832795
 mode operationMode = off;
@@ -179,6 +179,20 @@ void buttonInterrupt()
 		// 	break;
 		// }
 		switch (operationMode)
+		// {
+		// case (off):
+		// 	operationMode = single_icc;
+		// 	break;
+		// case (single_icc):
+		// 	operationMode = single_icc_new;
+		// 	break;
+		// case (single_icc_new):
+		// 	operationMode = off;
+		// 	break;
+		// default:
+		// 	operationMode = off;
+		// 	break;
+		// }
 		{
 		case (off):
 			operationMode = single_icc;
@@ -187,6 +201,12 @@ void buttonInterrupt()
 			operationMode = single_icc_new;
 			break;
 		case (single_icc_new):
+			operationMode = icc_1d;
+			break;
+		case (icc_1d):
+			operationMode = icc_1d_new;
+			break;
+		case (icc_1d_new):
 			operationMode = off;
 			break;
 		default:
@@ -552,55 +572,6 @@ void loop()
 		setAllPressures(0);
 		break;
 
-		// case symmetric:
-		// 	setAllOperationModes(operationMode);
-		// 	for (int i = 0; i < 200; i++)
-		// 	{
-		// 		if (operationMode == symmetric)
-		// 		{																													 // check if button was pressed during for loop
-		// 			setAllPressures(round(65 * sin(2 * PI / 200 * i) + 15)); // set new air pressure to pessure valves
-		// 			delay(waitTimeSymmetric);																 // waiting time until next pressure is set
-		// 			Serial.print("");
-		// 		}
-		// 	}
-		// 	break;
-
-		// case asymmetric:
-		// 	setAllOperationModes(operationMode);
-		// 	for (int i = 0; i < 50; i++)
-		// 	{
-		// 		if (operationMode == asymmetric)
-		// 		{																												// check if button was pressed during for loop
-		// 			setEnableValves(0);																		// close all enable valves
-		// 			b1.setPressure(round(45 * sin(2 * PI / 50 * i) - 5)); // set new air pressure to pessure valves
-		// 			delay(waitTimePipePressurised);												// waiting time until the new air pressure has set in the pipes
-		// 			setEnableValves(1);																		// open enable valve of bellow 1
-		// 			delay(waitTimeNextBellow);														// waiting time until the new air pressure has set in the bellow
-		// 			setEnableValves(0);																		// close all enable valves
-		// 			b2.setPressure(round(55 * sin(2 * PI / 50 * i) + 5)); // ...
-		// 			delay(waitTimePipePressurised);
-		// 			setEnableValves(2);
-		// 			delay(waitTimeNextBellow);
-		// 			setEnableValves(0);
-		// 			b3.setPressure(round(40 * sin(2 * PI / 50 * i) - 10));
-		// 			delay(waitTimePipePressurised);
-		// 			setEnableValves(3);
-		// 			delay(waitTimeNextBellow);
-		// 			setEnableValves(0);
-		// 			b4.setPressure(round(69 * sin(2 * PI / 50 * i) + 17));
-		// 			delay(waitTimePipePressurised);
-		// 			setEnableValves(4);
-		// 			delay(waitTimeNextBellow);
-		// 			setEnableValves(0);
-		// 			b5.setPressure(round(65 * sin(2 * PI / 50 * i) + 15));
-		// 			delay(waitTimePipePressurised);
-		// 			setEnableValves(5);
-		// 			delay(waitTimeNextBellow);
-		// 			Serial.print("");
-		// 		}
-		// 	}
-		// 	break;
-
 	case single_icc:
 	{
 		icc_init(&icc, true);
@@ -629,7 +600,7 @@ void loop()
 
 		while (operationMode == single_icc)
 		{
-			while ((int32_t)(millis() - next_step_ms) >= 0)
+			if ((int32_t)(millis() - next_step_ms) >= 0)
 			{
 				(void)icc_update(&icc, step_interval_ms);
 
@@ -741,7 +712,7 @@ void loop()
 
 		while (operationMode == single_icc_new)
 		{
-			while ((int32_t)(millis() - next_step_ms) >= 0)
+			if ((int32_t)(millis() - next_step_ms) >= 0)
 			{
 				(void)icc_update(&icc, step_interval_ms);
 
@@ -784,178 +755,286 @@ void loop()
 		}
 		break;
 	}
-
-	case icc_1d_new:
+	case icc_1d:
 	{
-		Serial.println("Entered ICC1D mode: awaiting 5-cell pressure vector on Serial1");
+		// ICC Variables
+		Icc iccs[ICC_V_COUNT][ICC_H_COUNT];
+		IccPath h_paths[ICC_V_COUNT][ICC_H_COUNT - 1]; // connects icc (i,j) to (i,j+1)
+		float h_path_t1[ICC_V_COUNT][ICC_H_COUNT - 1]; // time from start of path activation to relay activation
+		float h_path_t2[ICC_V_COUNT][ICC_H_COUNT - 1]; // time from start of path activation to other cell activation
+#if (ICC_V_COUNT > 1)
+		IccPath v_paths[ICC_V_COUNT - 1][ICC_H_COUNT]; // connects icc (i,j) to (i+1,j)
+		float v_path_t1[ICC_V_COUNT - 1][ICC_H_COUNT]; // time from start of path activation to relay activation
+		float v_path_t2[ICC_V_COUNT - 1][ICC_H_COUNT]; // time from start of path activation to other cell activation
+#endif
+
+		float proxLogVec[ICC_V_COUNT][ICC_H_COUNT];
+		// Bellow
+		Bellow *bellows[ICC_V_COUNT][ICC_H_COUNT];
+
+		step_interval_ms = TIME_STEP_MS_1D;
+		next_step_ms = 0;
+
+		// initialise ICCs
+		for (size_t i = 0; i < ICC_V_COUNT; i++)
+		{
+			for (size_t j = 0; j < ICC_H_COUNT; j++)
+			{
+				if (i == PACEMAKER_CELL_ROW && j == PACEMAKER_CELL_COL)
+				{
+					icc_init(&iccs[i][j], true);
+				}
+				else
+				{
+					icc_init(&iccs[i][j], false);
+				}
+			}
+		}
+
+		// initialise h_paths
+		for (size_t i = 0; i < ICC_V_COUNT; i++)
+		{
+			for (size_t j = 0; j < ICC_H_COUNT - 1; j++)
+			{
+				icc_path_init(&h_paths[i][j], &h_path_t1[i][j], &h_path_t2[i][j]);
+				h_paths[i][j].cells[0] = &iccs[i][j];
+				h_paths[i][j].cells[1] = &iccs[i][j + 1];
+			}
+		}
+
+		// initialise v_paths
+#if (ICC_V_COUNT > 1)
+		for (size_t i = 0; i < ICC_V_COUNT - 1; i++)
+		{
+			for (size_t j = 0; j < ICC_H_COUNT; j++)
+			{
+				icc_path_init(&v_paths[i][j], &v_path_t1[i][j], &v_path_t2[i][j]);
+				v_paths[i][j].cells[0] = &iccs[i][j];
+				v_paths[i][j].cells[1] = &iccs[i + 1][j];
+			}
+		}
+#endif
+
+		// initialize bellows
+		bellows[0][0] = &b1;
+		bellows[0][1] = &b2;
+		bellows[0][2] = &b3;
+		bellows[0][3] = &b4;
+		bellows[0][4] = &b5;
+
+		printf("mode: %s\n", modeToString(operationMode));
+
+		// Bellow initialisation for ICC mode
 		setAllOperationModes(symmetric);
 		setAllPressures(0);
 		delay(1000); // let any late startup bytes arrive
 		setEnableValves(0);
 
-		// Resync packet parsing on ICC_1D entry in case stale bytes are pending.
-		iccRxPos = 0;
+		next_step_ms = millis() + step_interval_ms;
 
-		// flush
-		unsigned int flushedVecBytes = 0;
-		while (Serial1.available() > 0)
+		while (operationMode == icc_1d)
 		{
-			Serial1.read();
-			flushedVecBytes++;
-		}
-		delay(50);
-
-		setEnableValves(0); // open all enable valves
-
-		while (Serial1.available() > 0)
-		{
-			Serial1.read();
-			flushedVecBytes++;
-		}
-		Serial.print("ICC_1D mode: startup RX flush complete, discarded bytes=");
-		Serial.println(flushedVecBytes);
-
-		int16_t pressureCmdVec[5] = {0, 0, 0, 0, 0};
-
-		while (operationMode == icc_1d || operationMode == icc_1d_new)
-		{
-			if (tryReadIccPressureVec(pressureCmdVec))
+			if ((int32_t)(millis() - next_step_ms) >= 0)
 			{
-				// bool changed = !havePrevVec;
-				// if (!changed)
-				// {
-				// 	for (uint8_t i = 0; i < 5; i++)
-				// 	{
-				// 		if (pressureCmdVec[i] != prevPressureCmdVec[i])
-				// 		{
-				// 			changed = true;
-				// 			break;
-				// 		}
-				// 	}
-				// }
-
-				// if (changed)
-				// {
-				// 	double proxVec[5];
-
-				// 	setEnableValves(0);
-				// 	delay(waitTimePipePressurised);
-				// 	b1.setPressure(pressureCmdVec[0]);
-				// 	setEnableValves(1);
-				// 	delay(waitTimeNextBellow);
-				// 	proxVec[0] = b1.getProximity();
-
-				// 	setEnableValves(0);
-				// 	delay(waitTimePipePressurised);
-				// 	b2.setPressure(pressureCmdVec[1]);
-				// 	setEnableValves(2);
-				// 	delay(waitTimeNextBellow);
-				// 	proxVec[1] = b2.getProximity();
-
-				// 	setEnableValves(0);
-				// 	delay(waitTimePipePressurised);
-				// 	b3.setPressure(pressureCmdVec[2]);
-				// 	setEnableValves(3);
-				// 	delay(waitTimeNextBellow);
-				// 	proxVec[2] = b3.getProximity();
-
-				// 	setEnableValves(0);
-				// 	delay(waitTimePipePressurised);
-				// 	b4.setPressure(pressureCmdVec[3]);
-				// 	setEnableValves(4);
-				// 	delay(waitTimeNextBellow);
-				// 	proxVec[3] = b4.getProximity();
-
-				// 	setEnableValves(0);
-				// 	delay(waitTimePipePressurised);
-				// 	b5.setPressure(pressureCmdVec[4]);
-				// 	setEnableValves(5);
-				// 	delay(waitTimeNextBellow);
-				// 	proxVec[4] = b5.getProximity();
-
-				// 	uint8_t rxHeader[2] = {0xAA, 0x55};
-				// 	Serial1.write(rxHeader, sizeof(rxHeader));
-				// 	Serial1.write((uint8_t *)proxVec, sizeof(proxVec));
-
-				// 	Serial.print("prox: ");
-				// 	for (uint8_t i = 0; i < 5; i++)
-				// 	{
-				// 		Serial.print(proxVec[i]);
-				// 		if (i < 4)
-				// 		{
-				// 			Serial.print(", ");
-				// 		}
-				// 		prevPressureCmdVec[i] = pressureCmdVec[i];
-				// 	}
-				// 	Serial.println();
-
-				// 	havePrevVec = true;
-				// }
-				double proxVec[5];
-
-				// icc 1 bellow 1
-				setEnableValves(0);
-				delay(waitTimePipePressurised);
-				b1.setPressure(pressureCmdVec[0]);
-				setEnableValves(1);
-				delay(waitTimeNextBellow);
-				proxVec[0] = ((17.0 + b1.getProximityForICC()) * 4.5) - 78;
-
-				// icc 2 bellow 2
-				setEnableValves(0);
-				delay(waitTimePipePressurised);
-				b2.setPressure(pressureCmdVec[1]);
-				setEnableValves(2);
-				delay(waitTimeNextBellow);
-				// proxVec[1] = 16 - b2.getProximityForICC();
-				// proxVec[1] = 11 + b2.getProximityForICC();
-				proxVec[1] = ((15.0 + b2.getProximityForICC()) * 3) - 78;
-
-				// icc 3 bellow 3
-				setEnableValves(0);
-				delay(waitTimePipePressurised);
-				b3.setPressure(pressureCmdVec[2]);
-				setEnableValves(3);
-				delay(waitTimeNextBellow);
-				// proxVec[2] = 11.0 + b3.getProximityForICC();
-				proxVec[2] = ((12.0 + b3.getProximityForICC()) * 5) - 78;
-
-				// icc 4 bellow 4
-				setEnableValves(0);
-				delay(waitTimePipePressurised);
-				b4.setPressure(pressureCmdVec[3]);
-				setEnableValves(4);
-				delay(waitTimeNextBellow);
-				// proxVec[3] = 12.0 + b4.getProximityForICC();
-				proxVec[3] = ((13.0 + b4.getProximityForICC()) * 5.5) - 78;
-
-				// icc 5 bellow 5
-				setEnableValves(0);
-				delay(waitTimePipePressurised);
-				b5.setPressure(pressureCmdVec[4]);
-				setEnableValves(5);
-				delay(waitTimeNextBellow);
-				// proxVec[4] = 12.0 + b5.getProximityForICC(); // for ICC mapping, invert proximity so that 16mm is zero and smaller values are more negative
-				proxVec[4] = ((14.0 + b5.getProximityForICC()) * 4.5) - 78;
-
-				uint8_t rxHeader[2] = {0xAA, 0x55};
-				Serial1.write(rxHeader, sizeof(rxHeader));
-				Serial1.write((uint8_t *)proxVec, sizeof(proxVec));
-
-				Serial.print("prox: ");
-				for (uint8_t i = 0; i < 5; i++)
+				// Update ICCs
+				for (size_t i = 0; i < ICC_V_COUNT; i++)
 				{
-					Serial.print(proxVec[i]);
-					if (i < 4)
+					for (size_t j = 0; j < ICC_H_COUNT; j++)
 					{
-						Serial.print(", ");
+						(void)icc_update(&iccs[i][j], step_interval_ms);
+						setEnableValves(0);
+						delay(waitTimePipePressurised);
+						bellows[i][j]->setPressure(mv_to_kpa(iccs[i][j].v));
+						setEnableValves(j + 1);
+						delay(waitTimeNextBellow);
+						proxLogVec[i][j] = bellows[i][j]->getProximityForICC();
 					}
 				}
-				Serial.println();
+
+				// Update paths
+				for (size_t i = 0; i < ICC_V_COUNT; i++)
+				{
+					for (size_t j = 0; j < ICC_H_COUNT - 1; j++)
+					{
+						icc_path_update(&h_paths[i][j], &h_path_t1[i][j], &h_path_t2[i][j], step_interval_ms);
+					}
+				}
+
+				// Schedule next step
+				next_step_ms += step_interval_ms;
+
+				// icc 1 bellow 1
+				proxLogVec[0][0] = ((17.0 + proxLogVec[0][0]) * 4.5) - 78;
+				// icc 2 bellow 2
+				proxLogVec[0][1] = ((15.0 + proxLogVec[0][1]) * 3) - 78;
+				// icc 3 bellow 3
+				proxLogVec[0][2] = ((12.0 + proxLogVec[0][2]) * 5) - 78;
+				// icc 4 bellow 4
+				proxLogVec[0][3] = ((13.0 + proxLogVec[0][3]) * 5.5) - 78;
+				// icc 5 bellow 5
+				proxLogVec[0][4] = ((14.0 + proxLogVec[0][4]) * 4.5) - 78;
+
+				// Send ICC states over Serial1
+				uint8_t rxHeader[2] = {0xAA, 0x55};
+				Serial1.write(rxHeader, sizeof(rxHeader));
+				// send ICC voltages as float
+				for (size_t i = 0; i < ICC_V_COUNT; i++)
+				{
+					for (size_t j = 0; j < ICC_H_COUNT; j++)
+					{
+						Serial1.write((uint8_t *)&iccs[i][j].v, sizeof(float));
+					}
+				}
+				for (size_t i = 0; i < ICC_V_COUNT; i++)
+				{
+					for (size_t j = 0; j < ICC_H_COUNT; j++)
+					{
+						Serial1.write((uint8_t *)&proxLogVec[i][j], sizeof(proxLogVec[i][j]));
+					}
+				}
+			}
+		}
+		break;
+	}
+
+	case icc_1d_new:
+	{
+		// ICC Variables
+		Icc iccs[ICC_V_COUNT][ICC_H_COUNT];
+		IccPath h_paths[ICC_V_COUNT][ICC_H_COUNT - 1]; // connects icc (i,j) to (i,j+1)
+		float h_path_t1[ICC_V_COUNT][ICC_H_COUNT - 1]; // time from start of path activation to relay activation
+		float h_path_t2[ICC_V_COUNT][ICC_H_COUNT - 1]; // time from start of path activation to other cell activation
+#if (ICC_V_COUNT > 1)
+		IccPath v_paths[ICC_V_COUNT - 1][ICC_H_COUNT]; // connects icc (i,j) to (i+1,j)
+		float v_path_t1[ICC_V_COUNT - 1][ICC_H_COUNT]; // time from start of path activation to relay activation
+		float v_path_t2[ICC_V_COUNT - 1][ICC_H_COUNT]; // time from start of path activation to other cell activation
+#endif
+		// Bellow
+		Bellow *bellows[ICC_V_COUNT][ICC_H_COUNT];
+		float proxLogVec[ICC_V_COUNT][ICC_H_COUNT];
+
+		step_interval_ms = TIME_STEP_MS_1D;
+		next_step_ms = 0;
+
+		// initialise ICCs
+		for (size_t i = 0; i < ICC_V_COUNT; i++)
+		{
+			for (size_t j = 0; j < ICC_H_COUNT; j++)
+			{
+				if (i == PACEMAKER_CELL_ROW && j == PACEMAKER_CELL_COL)
+				{
+					icc_init(&iccs[i][j], true);
+				}
+				else
+				{
+					icc_init(&iccs[i][j], false);
+				}
 			}
 		}
 
-		setEnableValves(0); // close all enable valves
+		// initialise h_paths
+		for (size_t i = 0; i < ICC_V_COUNT; i++)
+		{
+			for (size_t j = 0; j < ICC_H_COUNT - 1; j++)
+			{
+				icc_path_init(&h_paths[i][j], &h_path_t1[i][j], &h_path_t2[i][j]);
+				h_paths[i][j].cells[0] = &iccs[i][j];
+				h_paths[i][j].cells[1] = &iccs[i][j + 1];
+			}
+		}
+
+		// initialise v_paths
+#if (ICC_V_COUNT > 1)
+		for (size_t i = 0; i < ICC_V_COUNT - 1; i++)
+		{
+			for (size_t j = 0; j < ICC_H_COUNT; j++)
+			{
+				icc_path_init(&v_paths[i][j], &v_path_t1[i][j], &v_path_t2[i][j]);
+				v_paths[i][j].cells[0] = &iccs[i][j];
+				v_paths[i][j].cells[1] = &iccs[i + 1][j];
+			}
+		}
+#endif
+
+		// initialize bellows
+		bellows[0][0] = &b1;
+		bellows[0][1] = &b2;
+		bellows[0][2] = &b3;
+		bellows[0][3] = &b4;
+		bellows[0][4] = &b5;
+
+		printf("mode: %s\n", modeToString(operationMode));
+
+		// Bellow initialisation for ICC mode
+		setAllOperationModes(symmetric);
+		setAllPressures(0);
+		delay(1000); // let any late startup bytes arrive
+		setEnableValves(0);
+
+		next_step_ms = millis() + step_interval_ms;
+
+		while (operationMode == icc_1d_new)
+		{
+			if ((int32_t)(millis() - next_step_ms) >= 0)
+			{
+				// Update ICCs
+				for (size_t i = 0; i < ICC_V_COUNT; i++)
+				{
+					for (size_t j = 0; j < ICC_H_COUNT; j++)
+					{
+						(void)icc_update(&iccs[i][j], step_interval_ms);
+						setEnableValves(0);
+						delay(waitTimePipePressurised);
+						bellows[i][j]->setPressure(iccs[i][j].v > CONTRACTION_THRESHOLD ? 80 : -50);
+						setEnableValves(j + 1);
+						delay(waitTimeNextBellow);
+						proxLogVec[i][j] = bellows[i][j]->getProximityForICC();
+					}
+				}
+
+				// Update paths
+				for (size_t i = 0; i < ICC_V_COUNT; i++)
+				{
+					for (size_t j = 0; j < ICC_H_COUNT - 1; j++)
+					{
+						icc_path_update(&h_paths[i][j], &h_path_t1[i][j], &h_path_t2[i][j], step_interval_ms);
+					}
+				}
+
+				// Schedule next step
+				next_step_ms += step_interval_ms;
+
+				// icc 1 bellow 1
+				proxLogVec[0][0] = ((17.0 + proxLogVec[0][0]) * 4.5) - 78;
+				// icc 2 bellow 2
+				proxLogVec[0][1] = ((15.0 + proxLogVec[0][1]) * 3) - 78;
+				// icc 3 bellow 3
+				proxLogVec[0][2] = ((12.0 + proxLogVec[0][2]) * 5) - 78;
+				// icc 4 bellow 4
+				proxLogVec[0][3] = ((13.0 + proxLogVec[0][3]) * 5.5) - 78;
+				// icc 5 bellow 5
+				proxLogVec[0][4] = ((14.0 + proxLogVec[0][3]) * 4.5) - 78;
+
+				// Send ICC states over Serial1
+				uint8_t rxHeader[2] = {0xAA, 0x55};
+				Serial1.write(rxHeader, sizeof(rxHeader));
+				// send ICC voltages as float
+				for (size_t i = 0; i < ICC_V_COUNT; i++)
+				{
+					for (size_t j = 0; j < ICC_H_COUNT; j++)
+					{
+						Serial1.write((uint8_t *)&iccs[i][j].v, sizeof(iccs[i][j].v));
+					}
+				}
+				for (size_t i = 0; i < ICC_V_COUNT; i++)
+				{
+					for (size_t j = 0; j < ICC_H_COUNT; j++)
+					{
+						Serial1.write((uint8_t *)&proxLogVec[i][j], sizeof(proxLogVec[i][j]));
+					}
+				}
+			}
+		}
 		break;
 	}
 
