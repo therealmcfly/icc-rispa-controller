@@ -62,13 +62,11 @@ void icc_path_update(IccPath *path, float *t1, float *t2, uint32_t dt_ms)
 
 	if (!path->initialized || dt_ms == 0U || path->cells[0] == 0 || path->cells[1] == 0)
 	{
-		float *relay_a_to_b = (path->cells[1] != 0) ? &path->cells[1]->relay : 0;
-		float *relay_b_to_a = (path->cells[0] != 0) ? &path->cells[0]->relay : 0;
-		clear_outputs(relay_a_to_b, relay_b_to_a, t1, t2);
+		clear_outputs(0, 0, t1, t2);
 		return;
 	}
 
-	clear_outputs(&path->cells[1]->relay, &path->cells[0]->relay, t1, t2);
+	clear_outputs(0, 0, t1, t2);
 
 	switch (path->state)
 	{

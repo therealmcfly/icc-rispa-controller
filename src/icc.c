@@ -13,7 +13,7 @@ static float clampf(float x, float lo, float hi)
 	return x;
 }
 
-void icc_init(Icc *icc, bool is_pacemaker)
+void icc_init(Icc *icc, int pm_sw_interval)
 {
 	if (icc == 0)
 	{
@@ -30,13 +30,23 @@ void icc_init(Icc *icc, bool is_pacemaker)
 	icc->initialized = true;
 	icc->transition_count = 0U;
 	icc->relay = 0.0f;
-	if (is_pacemaker)
+	switch (pm_sw_interval)
 	{
-		icc->resting_slope = PACEMAKER_SLOPE_Q0;
-	}
-	else
-	{
-		icc->resting_slope = ICC_SLOPE_Q0;
+	case 20:
+		icc->resting_slope = Q1_SLOP_20SECS;
+		break;
+	case 23:
+		icc->resting_slope = Q1_SLOP_23SECS;
+		break;
+	case 30:
+		icc->resting_slope = Q1_SLOP_30SECS;
+		break;
+	case 40:
+		icc->resting_slope = Q1_SLOP_40SECS;
+		break;
+	default:
+		icc->resting_slope = 0.0f;
+		break;
 	}
 }
 

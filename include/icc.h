@@ -9,9 +9,12 @@ extern "C"
 {
 #endif
 
-#define PACEMAKER_SLOPE_Q0 (-0.069979275f)
+#define Q1_SLOP_20SECS (-0.069979275f) // 20 seconds (3 cpm)
+#define Q1_SLOP_23SECS (-0.052964706f) // 23 seconds (2.6 cpm)
+#define Q1_SLOP_30SECS (-0.0340f)			 // ~30 seconds (2 cpm)
+#define Q1_SLOP_40SECS (-0.022471698f) // 40 seconds (1.5 cpm)
 // #define ICC_SLOPE_Q0 (-0.069979275f)
-#define ICC_SLOPE_Q0 (-0.0f)
+// #define ICC_SLOPE_Q0 (-0.0f)
 #define ICC_SLOPE_Q1 (43.5248f)
 #define ICC_SLOPE_Q2 (-0.909759259f)
 #define ICC_SLOPE_Q3 (-8.636136364f)
@@ -48,7 +51,7 @@ extern "C"
 		float resting_slope;
 	} Icc;
 
-	void icc_init(Icc *icc, bool is_pacemaker);
+	void icc_init(Icc *icc, int pm_sw_interval);
 	float icc_update(Icc *icc, uint32_t dt_ms);
 	uint8_t icc_state_index(const Icc *icc);
 
