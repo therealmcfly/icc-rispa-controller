@@ -386,7 +386,8 @@ void loop()
 
 	case single_icc:
 	{
-		icc_init(&icc, PM_SLOWWAVE_INTERVAL);
+		const int8_t pm_slowwave_interval = PM_SLOWWAVE_INTERVAL;
+		icc_init(&icc, &pm_slowwave_interval);
 
 		step_interval_ms = TIME_STEP_MS_SINGLE;
 		next_step_ms = 0;
@@ -448,6 +449,9 @@ void loop()
 		float proxLogVec[ICC_V_COUNT][ICC_H_COUNT];
 		// Bellow
 		Bellow *bellows[ICC_V_COUNT][ICC_H_COUNT];
+		const int8_t pm_slowwave_interval = PM_SLOWWAVE_INTERVAL;
+		const int8_t other_icc_slowwave_interval = OTHER_ICC_SLOWWAVE_INTERVAL;
+		const uint16_t path_delay_ms = PATH_DELAY_MS;
 
 		step_interval_ms = TIME_STEP_MS_1D;
 		next_step_ms = 0;
@@ -459,11 +463,11 @@ void loop()
 			{
 				if (i == PACEMAKER_CELL_ROW && j == PACEMAKER_CELL_COL)
 				{
-					icc_init(&iccs[i][j], PM_SLOWWAVE_INTERVAL);
+					icc_init(&iccs[i][j], &pm_slowwave_interval);
 				}
 				else
 				{
-					icc_init(&iccs[i][j], OTHER_ICC_SLOWWAVE_INTERVAL);
+					icc_init(&iccs[i][j], &other_icc_slowwave_interval);
 				}
 			}
 		}
@@ -473,7 +477,7 @@ void loop()
 		{
 			for (size_t j = 0; j < ICC_H_COUNT - 1; j++)
 			{
-				icc_path_init(&h_paths[i][j], &h_path_t1[i][j], &h_path_t2[i][j]);
+				icc_path_init(&h_paths[i][j], &h_path_t1[i][j], &h_path_t2[i][j], &path_delay_ms);
 				h_paths[i][j].cells[0] = &iccs[i][j];
 				h_paths[i][j].cells[1] = &iccs[i][j + 1];
 			}
@@ -485,7 +489,7 @@ void loop()
 		{
 			for (size_t j = 0; j < ICC_H_COUNT; j++)
 			{
-				icc_path_init(&v_paths[i][j], &v_path_t1[i][j], &v_path_t2[i][j]);
+				icc_path_init(&v_paths[i][j], &v_path_t1[i][j], &v_path_t2[i][j], &path_delay_ms);
 				v_paths[i][j].cells[0] = &iccs[i][j];
 				v_paths[i][j].cells[1] = &iccs[i + 1][j];
 			}
